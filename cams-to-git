@@ -1,0 +1,336 @@
+#! /bin/sh -x
+
+# ----------------------------------------------------------------
+# First we need to split up the top levels of the subversion repository:
+
+# [granger@roo ~]$ svn ls https://proxy.subversion.ucar.edu/eol-cams/
+# BrianProto/
+# MiniD/
+# MiniD-PostProcessing/
+# branches/
+# data/
+# labview-scratch/
+# pickle/
+# rio-dev/
+# shared/
+# tags/
+# trunk/
+
+# The data directory will not be converted, so it must be excluded.
+
+# The pickle directory is just for experiments and examples and will not be
+# converted.
+
+# Within labview-scratch, all but Embedded can become its own repository
+# for "scratch" labview code.  labview-scratch/Embedded is an important
+# development branch which is included in the trunk line as an external, so
+# it can become its own repository.
+
+# I don't think there is anything useful in tags, so ignore it.
+
+# ----------------------------------------------------------------
+# These are the branches:
+#
+# [granger@roo eol-cams]$ svn ls https://proxy.subversion.ucar.edu/eol-cams/branches
+# DC3/
+# Embedded LV2013SP1/
+# Embedded LV2015/
+# Embedded TBD LV2015/
+
+# Future-single-queue/
+
+#  -- Branch of shared/Future which can probably be ignored.  However, the
+#     Future library started out in /labview-scratch/task-prototypes/Future
+#     and then moved into the shared/ directory, so I think that means that
+#     path must be included and perhaps renamed to extract the shared
+#     repository...
+
+# Scheduler and State/
+# State with Steps/
+# datastream-sync-rewrite/
+# datastream-sync-rewrite-20120615/
+# datastream-sync-rewrite-trunk-merge-20120531/
+# datastream-timing-channel-backups/
+# new-conc/
+
+# From Petter:
+#
+# I realized that I never explained the parts of the "Embedded TBD LV2015"
+# in my last e-mail...Sorry... Everything in the Embedded directory except
+# the "TBD" sub-directory belongs to the CVT based code and it can be in a
+# new repository "CVT". The "TBD" sub directory contains everything that
+# belongs to the object oriented development and it can be in a new
+# repository called "DCAF".
+
+# ----------------------------------------------------------------
+# Authors
+#
+# svn2git requires these entries in ~/.svn2git/authors
+#
+# granger = Gary Granger <granger@ucar.edu>
+# weibring = Petter Weibring <petter.weibring@colorado.edu>
+# brian.kindinger = Brian Kindinger <brian.kindinger@ni.com>
+
+# ----------------------------------------------------------------
+# Large files
+#
+# There is one file larger than 100MB which is not needed and can just be
+# excluded.  I think it's enough to exclude it from the trunk where it
+# first appeared, to keep it from showing up in branches and tags.
+
+bigfile="trunk/Data Processing/FFT/WMS FFT harmonics retrieval - Example 1b for Zhensong.vi"
+
+sedfile="cams-to-git-sedfile"
+rm -f "$sedfile"
+
+authorsfile="cams-to-git-authors"
+rm -f $authorsfile
+
+createauthors() {
+    cat > "$authorsfile" <<EOF
+granger = Gary Granger <granger@ucar.edu>
+weibring = Petter Weibring <petter.weibring@colorado.edu>
+brian.kindinger = Brian Kindinger <brian.kindinger@ni.com>
+EOF
+}
+
+createsedfile() {
+    cat /dev/null > "$sedfile"
+    while read source dest ; do
+	cat >> "$sedfile" <<EOF
+s,^Node-path: $source,Node-path: $dest,
+s,^Node-copyfrom-path: $source,Node-copyfrom-path: $dest,
+EOF
+    done <<EOF
+labview-scratch/task-prototypes/Future shared/Future
+labview-scratch/GutCheck shared/GutCheck
+labview-scratch/ReferenceObject shared/ReferenceObject
+labview-scratch/Counter/Logging shared/Logging
+labview-scratch/task-prototypes/eol-extra-g shared/eol-extra-g
+labview-scratch/task-prototypes/Dispatcher shared/Dispatcher
+EOF
+}
+
+
+renames() {
+    test -r "$sedfile" || createsedfile
+    sed --file="$sedfile"
+}
+
+rename() { # source dest
+    local source="$1"
+    local dest="$2"
+    sed -e "s,^Node-path: $source,Node-path: $dest," \
+	-e "s,^Node-copyfrom-path: $source,Node-copyfrom-path: $dest,"
+}
+
+
+# Keep empty revs because I think otherwise svnadmin load fails when
+# mergeinfo properties refer to missing revisions.
+filteropts="--drop-all-empty-revs --quiet"
+filteropts="--quiet"
+svndumpfilter="svndumpfilter $filteropts"
+
+# First separate the completely independent repositories.
+
+extractrepo() # dumpfile svnpath xopts
+{
+    local dumpfile="$1"
+    local svnpath="$2"
+    local xopts="$3"
+    if [ -z "$reponame" ]; then
+	reponame="$svnpath"
+    fi
+    echo "Creating repo ${reponame} from subversion path ${svnpath}..."
+    rm -f "${reponame}"
+    cat "$dumpfile" | $svndumpfilter include $xopts "${svnpath}" 
+}
+
+
+createsvnrepo() { # repopath [basedirs ...]
+    local repopath="$1"
+    local basedirs="$2 $3 $4 $5 $6"
+    rm -rf "$repopath"
+    mkdir -p "$repopath"
+    local url=file://`cd "$repopath" && pwd`
+    svnadmin create --fs-type fsfs "$repopath"
+    # basedirs="trunk branches tags"
+    for d in $basedirs END ; do
+	test $d == END && break
+	svn mkdir -m "create $d directory" $url/$d
+    done
+}
+
+
+loadsvnrepo() { # repopath
+    local repopath="$1"
+    # Assume the dump file does not have a trunk path
+    # parentopt="--parent-dir trunk"
+    # svn mkdir -m "create $repopath directory" $url/$repopath
+    svnadmin load $parentopt "$repopath" || exit 1
+    # Without a root trunk/ path, svn2git will use --rootistrunk
+}
+
+
+buildsvnrepo() { # repopath [basedirs ...]
+    createsvnrepo "$@"
+    loadsvnrepo "$1"
+}
+
+svntogit() { # svn-url
+    url="$1"
+    test -r "$authorsfile" || createauthors
+    reponame=`basename "$url"`.git
+    if [ "$reponame" == .git ]; then
+	echo "Repo name did not get set."
+	exit 1
+    fi
+    rm -rf "$reponame"
+    mkdir "$reponame"
+    local authors="--authors `pwd`/$authorsfile"
+    (cd "$reponame" && /usr/local/bin/svn2git --no-minimize-url --metadata $authors "$url")
+}
+
+
+minid() {
+    local dumpfile="$1"
+    extractrepo "$dumpfile" MiniD | buildsvnrepo minid
+    extractrepo "$dumpfile" MiniD-PostProcessing | buildsvnrepo minid-pp
+}
+
+shared() {
+    # Since several libraries started out in labview-scratch, we must
+    # include them explicitly.
+
+    # branches/Future-single-queue is a branch of shared/Future, so include
+    # that here.
+    local dumpfile="$1"
+    rm -f shared.dump
+    cat "$dumpfile" | \
+	$svndumpfilter include \
+		      labview-scratch/task-prototypes/Future \
+		      labview-scratch/GutCheck \
+		      labview-scratch/ReferenceObject \
+		      labview-scratch/Counter \
+		      labview-scratch/task-prototypes/eol-extra-g \
+		      labview-scratch/task-prototypes/Dispatcher \
+		      branches/Future-single-queue \
+		      shared | \
+	buildsvnrepo shared
+}
+
+riodev() {
+    local dumpfile="$1"
+    extractrepo "$dumpfile" rio-dev | buildsvnrepo rio-dev
+}
+
+embedded() {
+    local dumpfile="$1"
+    extractrepo "$dumpfile" labview-scratch/Embedded | buildsvnrepo Embedded
+}
+
+camsdump() {
+    # CAMS is the trunk plus branches/DC3
+    local dumpfile="$1"
+    echo "Creating CAMS repository..."
+
+    # Need to create intermediate directories when the whole directory is
+    # not being included, otherwise the transaction load fails.  So create
+    # /branches, but rename /labview-scratch/task-prototypes/DataStore to
+    # keep it under the trunk.
+
+    # Rename /BrianProto to /trunk/ConfigUI in the filter, since it was
+    # just copied into trunk in r313 and not changed after that.  Since
+    # there is no way to skip r313 by itself, use two separate loads to
+    # load the revisions before and after that.
+
+    # Likewise for labview-scratch/task-prototypes/DataStore.  It was
+    # copied to trunk/DataStream/DataStore in r424, and
+    # labview-scratch/task-prototypes copy was not (really) changed after
+    # that.
+
+    # After the conversion, DataStream/DataStreamException and
+    # DataStream/AnalogChannel are still in the svn checkout but not in the
+    # git checkout, because they are both empty directories.  Otherwise the
+    # only differences should be the missing externals: shared and
+    # Embedded.
+
+    cat "$dumpfile" | $svndumpfilter exclude "$bigfile" | \
+	$svndumpfilter include trunk branches/DC3 \
+        labview-scratch/task-prototypes/DataStore \
+        BrianProto \
+	"branches/State with Steps" \
+	branches/datastream-sync-rewrite \
+	branches/datastream-sync-rewrite-20120615 \
+	branches/datastream-sync-rewrite-trunk-merge-20120531 \
+	branches/datastream-timing-channel-backups | \
+	rename labview-scratch/task-prototypes/DataStore trunk/DataStream/DataStore | \
+	rename BrianProto trunk/ConfigUI > cams.dump
+}
+
+
+camsload() {
+    createsvnrepo cams branches
+    svnadmin load -r0:312 cams < cams.dump
+    svnadmin load -r314:423 cams < cams.dump
+    svnadmin load -r425:9999 cams < cams.dump
+}
+
+camsgit() {
+    repopath=cams
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
+}
+
+cams() { # dumpfile
+    camsdump "$1"
+    camsload
+    camsgit
+}
+
+
+scratch() {
+    # All the libraries which got incorporated into the shared repository
+    # can just be excluded from scratch.  This is not that big a deal since
+    # they are not large, but it could avoid confusion.
+    local dumpfile="$1"
+    echo "Creating labview scratch repository..."
+    cat "$dumpfile" | $svndumpfilter include labview-scratch | \
+	$svndumpfilter exclude \
+		      labview-scratch/Embedded \
+		      labview-scratch/task-prototypes/Future \
+		      labview-scratch/GutCheck \
+		      labview-scratch/ReferenceObject \
+		      labview-scratch/Counter \
+		      labview-scratch/task-prototypes/eol-extra-g \
+		      labview-scratch/task-prototypes/Dispatcher \
+		      > scratch
+}
+
+
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <op> <svndumpfile>"
+    exit 1
+fi
+
+op="$1"
+shift
+
+case "$op" in
+
+    svntogit)
+	svntogit "$@"
+	;;
+
+    scratch|embedded|riodev|shared|minid|cams*)
+	$op "$@"
+	;;
+
+    *)
+	echo "Unrecognized op: $op"
+	exit 1
+	;;
+
+esac
+
