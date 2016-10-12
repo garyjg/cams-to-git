@@ -53,14 +53,6 @@
 # datastream-timing-channel-backups/
 # new-conc/
 
-# From Petter:
-#
-# I realized that I never explained the parts of the "Embedded TBD LV2015"
-# in my last e-mail...Sorry... Everything in the Embedded directory except
-# the "TBD" sub-directory belongs to the CVT based code and it can be in a
-# new repository "CVT". The "TBD" sub directory contains everything that
-# belongs to the object oriented development and it can be in a new
-# repository called "DCAF".
 
 # ----------------------------------------------------------------
 # Authors
@@ -188,7 +180,7 @@ svntogit() { # svn-url
     rm -rf "$reponame"
     mkdir "$reponame"
     local authors="--authors `pwd`/$authorsfile"
-    (cd "$reponame" && /usr/local/bin/svn2git --no-minimize-url --metadata $authors "$url")
+    (cd "$reponame" && /usr/local/bin/svn2git --no-minimize-url --metadata $authors "$url" </dev/null)
 }
 
 
@@ -202,9 +194,15 @@ shared() {
     # Since several libraries started out in labview-scratch, we must
     # include them explicitly.
 
-    # branches/Future-single-queue is a branch of shared/Future, so include
-    # that here.
+    # /shared was created in r300, so skip that, and likewise the revisions
+    # which copied from labview-scratch: r301, r302, r303, r304, r305.
+
+    # branches/Future-single-queue is a branch of shared/Future, but it is
+    # not a true git branch because it does not branch the whole shared
+    # repo, so just leave it out since it's not needed anyway.
+
     local dumpfile="$1"
+    createsvnrepo shared trunk
     rm -f shared.dump
     cat "$dumpfile" | \
 	$svndumpfilter include \
@@ -214,10 +212,17 @@ shared() {
 		      labview-scratch/Counter \
 		      labview-scratch/task-prototypes/eol-extra-g \
 		      labview-scratch/task-prototypes/Dispatcher \
-		      branches/Future-single-queue \
 		      shared | \
-	buildsvnrepo shared
+	rename labview-scratch/task-prototypes trunk | \
+	rename labview-scratch/GutCheck trunk/GutCheck | \
+	rename labview-scratch/ReferenceObject trunk/ReferenceObject | \
+	rename labview-scratch/Counter/Logging trunk/Logging | \
+	rename labview-scratch/Counter trunk/Counter | \
+	> shared.dump
+    svnadmin load -r0:299 shared < shared.dump
+    svnadmin load -r306:9999 shared < shared.dump
 }
+
 
 riodev() {
     local dumpfile="$1"
@@ -247,7 +252,10 @@ camsdump() {
     # Likewise for labview-scratch/task-prototypes/DataStore.  It was
     # copied to trunk/DataStream/DataStore in r424, and
     # labview-scratch/task-prototypes copy was not (really) changed after
-    # that.
+    # that.  However, trunk/DataStream does not exist until 422, so we
+    # can't rename it directly.  Instead, put it under the trunk to start,
+    # and then replace r424 with a move from trunk/DataStore to
+    # trunk/DataStream.
 
     # After the conversion, DataStream/DataStreamException and
     # DataStream/AnalogChannel are still in the svn checkout but not in the
@@ -255,6 +263,7 @@ camsdump() {
     # only differences should be the missing externals: shared and
     # Embedded.
 
+    rm -f cams.dump
     cat "$dumpfile" | $svndumpfilter exclude "$bigfile" | \
 	$svndumpfilter include trunk branches/DC3 \
         labview-scratch/task-prototypes/DataStore \
@@ -264,16 +273,22 @@ camsdump() {
 	branches/datastream-sync-rewrite-20120615 \
 	branches/datastream-sync-rewrite-trunk-merge-20120531 \
 	branches/datastream-timing-channel-backups | \
-	rename labview-scratch/task-prototypes/DataStore trunk/DataStream/DataStore | \
+	rename labview-scratch/task-prototypes/DataStore trunk/DataStore | \
 	rename BrianProto trunk/ConfigUI > cams.dump
 }
 
 
 camsload() {
     createsvnrepo cams branches
+    repopath=cams
+    local url=file://`cd "$repopath" && pwd`
     svnadmin load -r0:312 cams < cams.dump
     svnadmin load -r314:423 cams < cams.dump
-    svnadmin load -r425:9999 cams < cams.dump
+    svn mv -m"move DataStore into place under DataStream, replacing the original commit which only copied it from labview-scratch/task-prototypes" \
+	"$url/trunk/DataStore" "$url/trunk/DataStream"
+    # After moving DataStore, the rest of the references have to refer to the new path.
+    cat cams.dump | rename trunk/DataStore trunk/DataStream/DataStore | \
+	svnadmin load -r425:9999 cams
 }
 
 camsgit() {
@@ -287,6 +302,64 @@ cams() { # dumpfile
     camsload
     camsgit
 }
+
+
+# From Petter:
+#
+# I realized that I never explained the parts of the "Embedded TBD LV2015"
+# in my last e-mail...Sorry... Everything in the Embedded directory except
+# the "TBD" sub-directory belongs to the CVT based code and it can be in a
+# new repository "CVT". The "TBD" sub directory contains everything that
+# belongs to the object oriented development and it can be in a new
+# repository called "DCAF".
+
+# So /branches/Embedded TBD LV2015/TBD was added in r1955, and even though
+# some commits after that change files outside of TBD, I assume I can use a
+# filter to include only TBD into a DCAF repository...
+
+# Also, in r1954, /branches/Embedded TBD LV2015 was copied from
+# /branches/Embedded LV2015, which in r1924 was copied from
+# /branches/Embedded LV2013SP1, which in turn in r1796 was copied from
+# /labview-scratch/Embedded.  So we handle this like CAMS: rename all the
+# various copies to be the trunk, and then skip the revisions which were
+# actually copies.  Fortunately none of the copies changed any files or
+# this wouldn't work.
+
+dcaf() {
+    local dumpfile="$1"
+    local repopath=DCAF
+    createsvnrepo $repopath
+    cat "$dumpfile" | \
+	$svndumpfilter include "branches/Embedded TBD LV2015/TBD" | \
+	rename "branches/Embedded TBD LV2015/TBD" trunk | \
+	svnadmin load $repopath
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
+}
+
+cvt() {
+    local dumpfile="$1"
+    local repopath=CVT
+    createsvnrepo $repopath
+    cat "$dumpfile" | \
+	$svndumpfilter include "branches/Embedded TBD LV2015" | \
+	$svndumpfilter include "branches/Embedded LV2015" | \
+	$svndumpfilter include "branches/Embedded LV2013SP1" | \
+	$svndumpfilter exclude "branches/Embedded TBD LV2015/TBD" | \
+	rename "branches/Embedded TBD LV2015" trunk | \
+	rename "branches/Embedded LV2015" trunk | \
+	rename "branches/Embedded LV2013SP1" trunk > cvt.dump
+
+    # Skip copies in r1796, r1924, and r1954.
+    svnadmin load -r0:1795 $repopath < cvt.dump
+    svnadmin load -r1797:1923 $repopath < cvt.dump
+    svnadmin load -r1925:1953 $repopath < cvt.dump
+    svnadmin load -r1955:9999 $repopath < cvt.dump
+
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
+}
+
 
 
 scratch() {
@@ -309,8 +382,8 @@ scratch() {
 
 
 
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <op> <svndumpfile>"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <op> [args ...]"
     exit 1
 fi
 
@@ -320,11 +393,28 @@ shift
 case "$op" in
 
     svntogit)
+	if [ $# -ne 1 ]; then
+	    echo "Usage: $0 $op <svn-url>"
+	    exit 1
+	fi
 	svntogit "$@"
 	;;
 
-    scratch|embedded|riodev|shared|minid|cams*)
+    scratch|embedded|riodev|shared|minid|dcaf|cvt|cams*)
+	if [ $# -ne 1 ]; then
+	    echo "Usage: $0 $op <dumpfile>"
+	    exit 1
+	fi
 	$op "$@"
+	;;
+
+    diff)
+	# Compare subversion checkout with git checkout:
+	if [ $# -ne 2 ]; then
+	    echo "Usage: $0 $op <svn-checkout> <git-checkout>"
+	    exit 1
+	fi
+	exec diff -q --recursive -x .git -x .svn "$1" "$2"
 	;;
 
     *)
