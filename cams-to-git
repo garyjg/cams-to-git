@@ -72,6 +72,8 @@
 
 bigfile="trunk/Data Processing/FFT/WMS FFT harmonics retrieval - Example 1b for Zhensong.vi"
 
+set -o pipefail
+
 sedfile="cams-to-git-sedfile"
 rm -f "$sedfile"
 
@@ -252,10 +254,32 @@ riodev() {
     extractrepo "$dumpfile" rio-dev | buildsvnrepo rio-dev
 }
 
+# In r509, trunk/Embedded was renamed from trunk/Utility.  Then in r660 it
+# was renamed to "trunk/Target Communication", and in r661 the svn:external
+# property was added to /trunk to embed the Embedded directory from
+# labview-scratch.  So the CAMS conversion should already contain all the
+# initial modifications to the trunk/Embedded tree and it's eventual rename
+# to become "Target Communication".  For the Embedded repo to which the
+# svn:external referred, all we need to convert is the
+# labview-scratch/Embedded development line beginning with r433.
+
 embedded() {
     local dumpfile="$1"
-    extractrepo "$dumpfile" labview-scratch/Embedded | buildsvnrepo Embedded
+    local repopath=Embedded
+    createsvnrepo $repopath
+    test $? -eq 0 || exit 1
+    cat "$dumpfile" | \
+	$svndumpfilter include "labview-scratch/Embedded" | \
+	rename "labview-scratch/Embedded" trunk > embedded.dump
+    test $? -eq 0 || exit 1
+
+    # Start with Embedded added in r433.
+    svnadmin load -r433:9999 $repopath < embedded.dump
+    test $? -eq 0 || exit 1
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
 }
+
 
 camsdump() {
     # CAMS is the trunk plus branches/DC3
@@ -287,7 +311,8 @@ camsdump() {
     # Embedded.
 
     rm -f cams.dump
-    cat "$dumpfile" | $svndumpfilter exclude "$bigfile" | \
+    cat "$dumpfile" | \
+	$svndumpfilter exclude "$bigfile" | \
 	$svndumpfilter include trunk branches/DC3 \
         labview-scratch/task-prototypes/DataStore \
         BrianProto \
@@ -296,6 +321,7 @@ camsdump() {
 	branches/datastream-sync-rewrite-20120615 \
 	branches/datastream-sync-rewrite-trunk-merge-20120531 \
 	branches/datastream-timing-channel-backups | \
+	$svndumpfilter exclude "trunk/Evaluation" | \
 	rename labview-scratch/task-prototypes/DataStore trunk/DataStore | \
 	rename BrianProto trunk/ConfigUI > cams.dump
 }
@@ -351,14 +377,41 @@ cams() { # dumpfile
 # Finally, the original labview-scratch/Embedded was deleted in r432 and
 # replaced in r433, so we only need revisions after r433.
 
+#
+# remote: warning: GH001: Large files detected. You may want to try Git Large File Storage - https://git-lfs.github.com.
+# remote: warning: See http://git.io/iEPt8g for more information.
+# remote: warning: File Evaluation/TDMS/Data Files/100127 4 lines_01.tdms is 54.19 MB; this is larger than GitHub's recommended maximum file size of 50.00 MB
+# To git@github.com:/NCAR/LVS-CAMS.git
+#  * [new branch]      master -> master
+#
+
+# The systemimage.tar.gz file is too large for github, and it seems
+# inappropriate to be keeping drive images in revision control, so leave
+# out the entire subdirectory.
+#
+# ------------------------------------------------------------------------
+# r2029 | weibring | 2016-08-14 22:57:29 -0600 (Sun, 14 Aug 2016) | 1 line
+# Changed paths:
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images/Flow
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images/Flow/Flow Image 20160814
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images/Flow/Flow Image 20160814/RTCtrlr.ini
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images/Flow/Flow Image 20160814/nisyscfg.niauth.bin
+#    A /branches/Embedded TBD LV2015/TBD/Target/Drive Images/Flow/Flow Image 20160814/systemimage.tar.gz
+
+
 dcaf() {
     local dumpfile="$1"
     local repopath=DCAF
     createsvnrepo $repopath
+    test $? -eq 0 || exit 1
     cat "$dumpfile" | \
 	$svndumpfilter include "branches/Embedded TBD LV2015/TBD" | \
+	$svndumpfilter exclude \
+	       "branches/Embedded TBD LV2015/TBD/Target/Drive Images" | \
 	rename "branches/Embedded TBD LV2015/TBD" trunk | \
 	svnadmin load $repopath
+    test $? -eq 0 || exit 1
     local url=file://`cd "$repopath" && pwd`
     svntogit "$url"
 }
@@ -375,7 +428,7 @@ dcaf() {
 cvt() {
     local dumpfile="$1"
     local repopath=CVT
-    createsvnrepo $repopath
+    createsvnrepo $repopath || exit 1
     cat "$dumpfile" | \
 	$svndumpfilter include \
 		       "labview-scratch/Embedded" \
@@ -387,19 +440,23 @@ cvt() {
 	rename "branches/Embedded TBD LV2015" trunk | \
 	rename "branches/Embedded LV2015" trunk | \
 	rename "branches/Embedded LV2013SP1" trunk > cvt.dump
+    test $? -eq 0 || exit 1
 
     # Start with Embedded added in r433, and skip copies in r1796, r1924,
     # and r1954.
-    svnadmin load -r433:1795 $repopath < cvt.dump
-    svnadmin load -r1797:1923 $repopath < cvt.dump
-    svnadmin load -r1925:1953 $repopath < cvt.dump
-    svnadmin load -r1955:9999 $repopath < cvt.dump
+    for revs in 433:1795 1797:1923 1925:1953 1955:9999 ; do
+	svnadmin load -r$revs $repopath < cvt.dump || exit 1
+    done
 
     local url=file://`cd "$repopath" && pwd`
     svntogit "$url"
 }
 
 
+# This should include /labview-scratch/TDMS-Test which was moved from
+# trunk/Evaluation in r250, since the trunk/Evaluation revisions are
+# omitted from CAMS.  We also may need to trim the larger tdms files (>
+# 50MB) to avoid warnings from github.
 
 scratch() {
     # All the libraries which got incorporated into the shared repository
@@ -417,6 +474,8 @@ scratch() {
 		      labview-scratch/task-prototypes/eol-extra-g \
 		      labview-scratch/task-prototypes/Dispatcher \
 		      > scratch
+    test $? -eq 0 || exit 1
+
 }
 
 
