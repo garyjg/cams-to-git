@@ -190,6 +190,9 @@ minid() {
     extractrepo "$dumpfile" MiniD-PostProcessing | buildsvnrepo minid-pp
 }
 
+# shared works.  Only difference is that LogDisplay directory does not
+# appear in git repo because it is empty in subversion.
+
 shared() {
     # Since several libraries started out in labview-scratch, we must
     # include them explicitly.
@@ -201,11 +204,19 @@ shared() {
     # not a true git branch because it does not branch the whole shared
     # repo, so just leave it out since it's not needed anyway.
 
+    # Counter was never moved into /shared, so exclude it after renaming
+    # Counter/Logger to trunk/Logger
+
+    # labview-scratch/SelfReference was added in r493, renamed to
+    # ReferenceObject in r617, then ReferenceObject was moved into /shared
+    # in r619.
+
     local dumpfile="$1"
     createsvnrepo shared trunk
     rm -f shared.dump
     cat "$dumpfile" | \
 	$svndumpfilter include \
+		      labview-scratch/SelfReference \
 		      labview-scratch/task-prototypes/Future \
 		      labview-scratch/GutCheck \
 		      labview-scratch/ReferenceObject \
@@ -215,13 +226,25 @@ shared() {
 		      shared | \
 	rename labview-scratch/task-prototypes trunk | \
 	rename labview-scratch/GutCheck trunk/GutCheck | \
+	rename labview-scratch/SelfReference trunk/ReferenceObject | \
 	rename labview-scratch/ReferenceObject trunk/ReferenceObject | \
 	rename labview-scratch/Counter/Logging trunk/Logging | \
-	rename labview-scratch/Counter trunk/Counter | \
+	$svndumpfilter exclude labview-scratch/Counter | \
+	rename shared trunk \
 	> shared.dump
-    svnadmin load -r0:299 shared < shared.dump
-    svnadmin load -r306:9999 shared < shared.dump
+    for revs in 0:299 306:616 618 620:9999 ; do
+	svnadmin load -r$revs shared < shared.dump || exit 1
+    done
+    sharedgit
 }
+
+
+sharedgit() {
+    repopath=shared
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
+}
+
 
 
 riodev() {
@@ -325,6 +348,9 @@ cams() { # dumpfile
 # actually copies.  Fortunately none of the copies changed any files or
 # this wouldn't work.
 
+# Finally, the original labview-scratch/Embedded was deleted in r432 and
+# replaced in r433, so we only need revisions after r433.
+
 dcaf() {
     local dumpfile="$1"
     local repopath=DCAF
@@ -337,21 +363,34 @@ dcaf() {
     svntogit "$url"
 }
 
+# After converting CVT, there are only these differences.  The missing TBD
+# is expected, and the xml and ctl files may differ because of line
+# endings.
+
+# diff -q --recursive -x .git -x .svn ../CVT/ CVT.git/
+# Files ../CVT/Configuration Files/Target_Tag_Configuration.xml and CVT.git/Configuration Files/Target_Tag_Configuration.xml differ
+# Files ../CVT/Target/Code/FPGA/Ctrls/spectra_fpga_vi_reference.ctl and CVT.git/Target/Code/FPGA/Ctrls/spectra_fpga_vi_reference.ctl differ
+# Only in ../CVT/: TBD
+#
 cvt() {
     local dumpfile="$1"
     local repopath=CVT
     createsvnrepo $repopath
     cat "$dumpfile" | \
-	$svndumpfilter include "branches/Embedded TBD LV2015" | \
-	$svndumpfilter include "branches/Embedded LV2015" | \
-	$svndumpfilter include "branches/Embedded LV2013SP1" | \
+	$svndumpfilter include \
+		       "labview-scratch/Embedded" \
+		       "branches/Embedded TBD LV2015" \
+		       "branches/Embedded LV2015" \
+		       "branches/Embedded LV2013SP1" | \
 	$svndumpfilter exclude "branches/Embedded TBD LV2015/TBD" | \
+	rename "labview-scratch/Embedded" trunk | \
 	rename "branches/Embedded TBD LV2015" trunk | \
 	rename "branches/Embedded LV2015" trunk | \
 	rename "branches/Embedded LV2013SP1" trunk > cvt.dump
 
-    # Skip copies in r1796, r1924, and r1954.
-    svnadmin load -r0:1795 $repopath < cvt.dump
+    # Start with Embedded added in r433, and skip copies in r1796, r1924,
+    # and r1954.
+    svnadmin load -r433:1795 $repopath < cvt.dump
     svnadmin load -r1797:1923 $repopath < cvt.dump
     svnadmin load -r1925:1953 $repopath < cvt.dump
     svnadmin load -r1955:9999 $repopath < cvt.dump
@@ -400,7 +439,7 @@ case "$op" in
 	svntogit "$@"
 	;;
 
-    scratch|embedded|riodev|shared|minid|dcaf|cvt|cams*)
+    scratch|embedded|riodev|shared*|minid|dcaf|cvt|cams*)
 	if [ $# -ne 1 ]; then
 	    echo "Usage: $0 $op <dumpfile>"
 	    exit 1
