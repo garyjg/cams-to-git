@@ -125,22 +125,6 @@ filteropts="--drop-all-empty-revs --quiet"
 filteropts="--quiet"
 svndumpfilter="svndumpfilter $filteropts"
 
-# First separate the completely independent repositories.
-
-extractrepo() # dumpfile svnpath xopts
-{
-    local dumpfile="$1"
-    local svnpath="$2"
-    local xopts="$3"
-    if [ -z "$reponame" ]; then
-	reponame="$svnpath"
-    fi
-    echo "Creating repo ${reponame} from subversion path ${svnpath}..."
-    rm -f "${reponame}"
-    cat "$dumpfile" | $svndumpfilter include $xopts "${svnpath}" 
-}
-
-
 createsvnrepo() { # repopath [basedirs ...]
     local repopath="$1"
     local basedirs="$2 $3 $4 $5 $6"
@@ -186,11 +170,43 @@ svntogit() { # svn-url
 }
 
 
-minid() {
-    local dumpfile="$1"
-    extractrepo "$dumpfile" MiniD | buildsvnrepo minid
-    extractrepo "$dumpfile" MiniD-PostProcessing | buildsvnrepo minid-pp
+pathtogit() { # repopath [-r<revs>] dumpfile 
+    local repopath="$1"
+    shift
+    local revs=""
+    local dumpfile=""
+    for arg in $* ; do
+	case "$arg" in
+	    -r*) revs="$arg" ;;
+	    *) dumpfile="$arg" ;;
+	esac
+    done
+    if [ -z "$dumpfile" -o -z "$repopath" ]; then
+	echo "pathtogit <repopath> [-r<revs>] <dumpfile>"
+	exit 1
+    fi
+    createsvnrepo $repopath
+    test $? -eq 0 || exit 1
+    cat "$dumpfile" | \
+	$svndumpfilter include "$repopath" | \
+	rename "$repopath" trunk | \
+	svnadmin load $revs $repopath
+    test $? -eq 0 || exit 1
+
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
 }
+
+
+minid() {
+    pathtogit MiniD -r237:241 "$@" 
+}
+
+
+minidpp() {
+    pathtogit MiniD-PostProcessing -r238 "$@"
+}
+
 
 # shared works.  Only difference is that LogDisplay directory does not
 # appear in git repo because it is empty in subversion.
@@ -251,8 +267,19 @@ sharedgit() {
 
 riodev() {
     local dumpfile="$1"
-    extractrepo "$dumpfile" rio-dev | buildsvnrepo rio-dev
+    local repopath=riodev
+    createsvnrepo $repopath
+    test $? -eq 0 || exit 1
+    cat "$dumpfile" | \
+	$svndumpfilter include "rio-dev" | \
+	rename "rio-dev" trunk | \
+	svnadmin load $repopath
+    test $? -eq 0 || exit 1
+
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
 }
+
 
 # In r509, trunk/Embedded was renamed from trunk/Utility.  Then in r660 it
 # was renamed to "trunk/Target Communication", and in r661 the svn:external
@@ -552,7 +579,7 @@ case "$op" in
 	svntogit "$@"
 	;;
 
-    scratch|embedded|riodev|shared*|minid|dcaf|cvt|cams*)
+    scratch|embedded|riodev|shared*|minid*|dcaf|cvt|cams*)
 	if [ $# -ne 1 ]; then
 	    echo "Usage: $0 $op <dumpfile>"
 	    exit 1
