@@ -516,9 +516,9 @@ scratch() {
 	       > scratch.dump
     test $? -eq 0 || exit 1
 
-    # Skip TDMS-Test move in r250, labview-scratch creation in r149, and
-    # Subpanels creationg in r352.
-    for revs in 0:6 8:148 150:249 251:351 353:9999 ; do
+    # Skip TDMS-Test move in r250, labview-scratch creation in r149, 
+    # Subpanels creation in r352, and Example vi moves in r353.
+    for revs in 0:6 8:148 150:249 251:351 354:9999 ; do
 	svnadmin load -r$revs $repopath < scratch.dump || exit 1
     done
 
