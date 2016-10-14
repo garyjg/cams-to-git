@@ -198,13 +198,23 @@ pathtogit() { # repopath [-r<revs>] dumpfile
 }
 
 
+# Combine MiniD with MiniD-PostProcessing by renaming MiniD-PostProcessing
+# to MiniD/PostProcessing.
+
 minid() {
-    pathtogit MiniD -r237:241 "$@" 
-}
+    local dumpfile="$1"
+    local repopath=MiniD
+    createsvnrepo $repopath
+    test $? -eq 0 || exit 1
+    cat "$dumpfile" | \
+	$svndumpfilter include "MiniD" "MiniD-PostProcessing" | \
+	rename "MiniD-PostProcessing" trunk/PostProcessing | \
+	rename "MiniD" trunk | \
+	svnadmin load -r237:241 $repopath
+    test $? -eq 0 || exit 1
 
-
-minidpp() {
-    pathtogit MiniD-PostProcessing -r238 "$@"
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
 }
 
 
