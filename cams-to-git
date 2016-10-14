@@ -264,20 +264,13 @@ sharedgit() {
 }
 
 
+# /rio-dev was first added in r1789, r1790 imported code into
+# /rio-dev/rio-dev, then r1791 deleted /rio-dev.  So no history for
+# /rio-dev is needed before r1792, and in fact that's also the last commit
+# to /rio-dev.
 
 riodev() {
-    local dumpfile="$1"
-    local repopath=riodev
-    createsvnrepo $repopath
-    test $? -eq 0 || exit 1
-    cat "$dumpfile" | \
-	$svndumpfilter include "rio-dev" | \
-	rename "rio-dev" trunk | \
-	svnadmin load $repopath
-    test $? -eq 0 || exit 1
-
-    local url=file://`cd "$repopath" && pwd`
-    svntogit "$url"
+    pathtogit rio-dev -r1792 "$@" 
 }
 
 
@@ -553,6 +546,39 @@ scratch() {
     # deleted.
     for revs in 0:6 8:148 150:249 251:351 354:383 385:9999 ; do
 	svnadmin load -r$revs $repopath < scratch.dump || exit 1
+    done
+
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
+}
+
+
+# /branches/new-conc is a branch of trunk, but Petter wanted to keep it as
+# a separate repository to pick up for future development.  The initial
+# copy was in r1772, and the copy included some modifications also.  But
+# then that copy was deleted in r1775 and repeated in r1776, again with a
+# few modifications from the trunk, and new directories "Data
+# Processing/Analysis" and "Task/TaskConcEval". r1783 was the last commit
+# to that branch.  There really aren't that many changes on it, so it seems
+# like it should stay a branch of CAMS rather than become an almost
+# complete copy of CAMS.
+
+newconc() {
+    local dumpfile="$1"
+    local repopath=new-conc
+
+    rm -f "${repopath}.dump"
+    createsvnrepo $repopath || exit 1
+    cat "$dumpfile" | $svndumpfilter include "branches/new-conc" | \
+	rename "branches/new-conc" trunk | \
+	$svndumpfilter exclude \
+	       "trunk/TDMS-Test/TDMS/Data Files/100127 4 lines_01.tdms" \
+	       "trunk/TDMS-Test/TDMS/Data Files/100127 4 lines_01.tdms_index" \
+	       > "${repopath}.dump"
+    test $? -eq 0 || exit 1
+
+    for revs in 0:1783 ; do
+	svnadmin load -r$revs $repopath < "${repopath}.dump" || exit 1
     done
 
     local url=file://`cd "$repopath" && pwd`
