@@ -311,34 +311,37 @@ embedded() {
 }
 
 
+# Need to create intermediate directories when the whole directory is
+# not being included, otherwise the transaction load fails.  So create
+# /branches, but rename /labview-scratch/task-prototypes/DataStore to
+# keep it under the trunk.
+
+# Rename /BrianProto to /trunk/ConfigUI in the filter, since it was
+# just copied into trunk in r313 and not changed after that.  Since
+# there is no way to skip r313 by itself, use two separate loads to
+# load the revisions before and after that.
+
+# Likewise for labview-scratch/task-prototypes/DataStore.  It was
+# copied to trunk/DataStream/DataStore in r424, and
+# labview-scratch/task-prototypes copy was not (really) changed after
+# that.  However, trunk/DataStream does not exist until 422, so we
+# can't rename it directly.  Instead, put it under the trunk to start,
+# and then replace r424 with a move from trunk/DataStore to
+# trunk/DataStream.
+
+# After the conversion, DataStream/DataStreamException and
+# DataStream/AnalogChannel are still in the svn checkout but not in the
+# git checkout, because they are both empty directories.  Otherwise the
+# only differences should be the missing externals: shared and
+# Embedded.
+
+# When pushing the final git repo, make sure to push --all after setting
+# upstream, otherwise only the master branch is pushed to github.
+
 camsdump() {
-    # CAMS is the trunk plus branches/DC3
+    # CAMS is the trunk plus several of the branches subdirectories
     local dumpfile="$1"
     echo "Creating CAMS repository..."
-
-    # Need to create intermediate directories when the whole directory is
-    # not being included, otherwise the transaction load fails.  So create
-    # /branches, but rename /labview-scratch/task-prototypes/DataStore to
-    # keep it under the trunk.
-
-    # Rename /BrianProto to /trunk/ConfigUI in the filter, since it was
-    # just copied into trunk in r313 and not changed after that.  Since
-    # there is no way to skip r313 by itself, use two separate loads to
-    # load the revisions before and after that.
-
-    # Likewise for labview-scratch/task-prototypes/DataStore.  It was
-    # copied to trunk/DataStream/DataStore in r424, and
-    # labview-scratch/task-prototypes copy was not (really) changed after
-    # that.  However, trunk/DataStream does not exist until 422, so we
-    # can't rename it directly.  Instead, put it under the trunk to start,
-    # and then replace r424 with a move from trunk/DataStore to
-    # trunk/DataStream.
-
-    # After the conversion, DataStream/DataStreamException and
-    # DataStream/AnalogChannel are still in the svn checkout but not in the
-    # git checkout, because they are both empty directories.  Otherwise the
-    # only differences should be the missing externals: shared and
-    # Embedded.
 
     rm -f cams.dump
     cat "$dumpfile" | \
@@ -350,7 +353,8 @@ camsdump() {
 	branches/datastream-sync-rewrite \
 	branches/datastream-sync-rewrite-20120615 \
 	branches/datastream-sync-rewrite-trunk-merge-20120531 \
-	branches/datastream-timing-channel-backups | \
+	branches/datastream-timing-channel-backups \
+	branches/new-conc | \
 	$svndumpfilter exclude "trunk/Evaluation" | \
 	rename labview-scratch/task-prototypes/DataStore trunk/DataStore | \
 	rename BrianProto trunk/ConfigUI > cams.dump
@@ -361,13 +365,23 @@ camsload() {
     createsvnrepo cams branches
     repopath=cams
     local url=file://`cd "$repopath" && pwd`
+
     svnadmin load -r0:312 cams < cams.dump
     svnadmin load -r314:423 cams < cams.dump
-    svn mv -m"move DataStore into place under DataStream, replacing the original commit which only copied it from labview-scratch/task-prototypes" \
-	"$url/trunk/DataStore" "$url/trunk/DataStream"
-    # After moving DataStore, the rest of the references have to refer to the new path.
-    cat cams.dump | rename trunk/DataStore trunk/DataStream/DataStore | \
-	svnadmin load -r425:9999 cams
+
+    svn mv -F - "$url/trunk/DataStore" "$url/trunk/DataStream" <<EOF
+move DataStore into place under DataStream, replacing the original commit
+which only copied it from labview-scratch/task-prototypes
+EOF
+
+    # After moving DataStore, the rest of the references have to refer to
+    # the new path.  Skip r1772 and r1775, where the first new-conc branch
+    # was created and then deleted.
+    for revs in 425:1771 1773:1774 1776:9999 ; do
+	cat cams.dump | \
+	    rename trunk/DataStore trunk/DataStream/DataStore | \
+	    svnadmin load -r$revs cams
+    done
 }
 
 camsgit() {
@@ -377,9 +391,7 @@ camsgit() {
 }
 
 cams() { # dumpfile
-    camsdump "$1"
-    camsload
-    camsgit
+    camsdump "$1" && camsload && camsgit
 }
 
 
@@ -615,7 +627,7 @@ case "$op" in
 	svntogit "$@"
 	;;
 
-    scratch|embedded|riodev|shared*|minid*|dcaf|cvt|cams*)
+    scratch|embedded|riodev|shared*|minid|dcaf|cvt|cams*)
 	if [ $# -ne 1 ]; then
 	    echo "Usage: $0 $op <dumpfile>"
 	    exit 1
