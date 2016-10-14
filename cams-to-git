@@ -458,13 +458,48 @@ cvt() {
 # omitted from CAMS.  We also may need to trim the larger tdms files (>
 # 50MB) to avoid warnings from github.
 
+# The Subpanels-and-Panes scratch directory was created in r352, and then
+# two VIs were moved there from trunk/ConfigUI in r353:
+#
+# trunk/ConfigUI/ExampleQuadTabPanels.vi
+# trunk/ConfigUI/ExampleTreeQuadPanels.vi
+#
+# Those files were added to trunk/ConfigUI in r351.  So to keep those
+# without having to include all of trunk/ConfigUI, we do the following:
+#
+# Create trunk/Subpanels-and-Panes explicitly after r350.  It doesn't
+# matter when, it just has to happen after r149 when labview-scratch (aka
+# trunk) is created.  Or else we skip r149 and create both upfront.
+#
+# Include only those VIs from ConfigUI but rename them so they are added
+# to trunk/Subpanels... in r351.
+#
+# Skip r352 which created Subpanels...
+
+# labview-scratch/tutorials came from trunk/labview/tutorials in r384,
+# which in turn was moved from trunk/tutorials in r7, and trunk/tutorials
+# was created in r6.  So skip the move in r7 and map
+# trunk/labview/tutorials to just trunk/tutorials.
+
+# So trunk/labview and trunk/tutorials should have been omitted from CAMS
+# trunk, but they were not.  Oh well.
+
 scratch() {
     # All the libraries which got incorporated into the shared repository
     # can just be excluded from scratch.  This is not that big a deal since
     # they are not large, but it could avoid confusion.
     local dumpfile="$1"
+    local repopath=scratch
     echo "Creating labview scratch repository..."
-    cat "$dumpfile" | $svndumpfilter include labview-scratch | \
+    rm -f scratch.dump
+    createsvnrepo $repopath trunk trunk/Subpanels-and-Panes || exit 1
+    cat "$dumpfile" | $svndumpfilter include \
+	     labview-scratch trunk/Evaluation \
+	     trunk/tutorials trunk/labview/tutorials \
+	     trunk/ConfigUI/ExampleQuadTabPanels.vi \
+	     trunk/ConfigUI/ExampleTreeQuadPanels.vi | \
+	rename trunk/labview/tutorials trunk/tutorials | \
+	rename trunk/ConfigUI trunk/Subpanels-and-Panes | \
 	$svndumpfilter exclude \
 		      labview-scratch/Embedded \
 		      labview-scratch/task-prototypes/Future \
@@ -472,10 +507,23 @@ scratch() {
 		      labview-scratch/ReferenceObject \
 		      labview-scratch/Counter \
 		      labview-scratch/task-prototypes/eol-extra-g \
-		      labview-scratch/task-prototypes/Dispatcher \
-		      > scratch
+		      labview-scratch/task-prototypes/Dispatcher | \
+	rename labview-scratch trunk | \
+	rename trunk/Evaluation trunk/TDMS-Test | \
+	$svndumpfilter exclude \
+	       "trunk/TDMS-Test/TDMS/Data Files/100127 4 lines_01.tdms" \
+	       "trunk/TDMS-Test/TDMS/Data Files/100127 4 lines_01.tdms_index" \
+	       > scratch.dump
     test $? -eq 0 || exit 1
 
+    # Skip TDMS-Test move in r250, labview-scratch creation in r149, and
+    # Subpanels creationg in r352.
+    for revs in 0:6 8:148 150:249 251:351 353:9999 ; do
+	svnadmin load -r$revs $repopath < scratch.dump || exit 1
+    done
+
+    local url=file://`cd "$repopath" && pwd`
+    svntogit "$url"
 }
 
 
