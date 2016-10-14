@@ -484,6 +484,9 @@ cvt() {
 # So trunk/labview and trunk/tutorials should have been omitted from CAMS
 # trunk, but they were not.  Oh well.
 
+# labview-scratch/Counter did not move into shared, so only
+# labview-scratch/Counter/Logger needs to be excluded.
+
 scratch() {
     # All the libraries which got incorporated into the shared repository
     # can just be excluded from scratch.  This is not that big a deal since
@@ -505,7 +508,7 @@ scratch() {
 		      labview-scratch/task-prototypes/Future \
 		      labview-scratch/GutCheck \
 		      labview-scratch/ReferenceObject \
-		      labview-scratch/Counter \
+		      labview-scratch/Counter/Logger \
 		      labview-scratch/task-prototypes/eol-extra-g \
 		      labview-scratch/task-prototypes/Dispatcher | \
 	rename labview-scratch trunk | \
@@ -516,9 +519,12 @@ scratch() {
 	       > scratch.dump
     test $? -eq 0 || exit 1
 
-    # Skip TDMS-Test move in r250, labview-scratch creation in r149, 
-    # Subpanels creation in r352, and Example vi moves in r353.
-    for revs in 0:6 8:148 150:249 251:351 354:9999 ; do
+    # Skip TDMS-Test move in r250, labview-scratch creation in r149,
+    # Subpanels creation in r352, and Example vi moves in r353.  Also skip
+    # r384 which moved /trunk/labview/tutorials into labview-scratch,
+    # otherwise the trunk/tutorials being assembled above just gets
+    # deleted.
+    for revs in 0:6 8:148 150:249 251:351 354:383 385:9999 ; do
 	svnadmin load -r$revs $repopath < scratch.dump || exit 1
     done
 
