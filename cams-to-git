@@ -167,6 +167,9 @@ svntogit() { # svn-url
     mkdir "$reponame"
     local authors="--authors `pwd`/$authorsfile"
     (cd "$reponame" && /usr/local/bin/svn2git --no-minimize-url --metadata $authors "$url" </dev/null)
+    # Sometimes svn2git tries to run git gc and it fails, so just run it
+    # separately every time.
+    (cd "$reponame" && git gc)
 }
 
 
@@ -335,6 +338,15 @@ embedded() {
 # only differences should be the missing externals: shared and
 # Embedded.
 
+# Do not include the new-analysis branch, since the commit comment in
+# r1774 specifically says it was corrupted, so it's not worth keeping.
+
+# I tried skipping the revisions which created and deleted the first
+# new-conc branch, instead keeping only the branch started in r1776 as a
+# copy of /trunk:1763, but that caused differences between the git checkout
+# of the new-conc branch and the subversion checkout.  I could not figure
+# out why, so the original revisions are still included.
+
 # When pushing the final git repo, make sure to push --all after setting
 # upstream, otherwise only the master branch is pushed to github.
 
@@ -375,9 +387,15 @@ which only copied it from labview-scratch/task-prototypes
 EOF
 
     # After moving DataStore, the rest of the references have to refer to
-    # the new path.  Skip r1772 and r1775, where the first new-conc branch
-    # was created and then deleted.
-    for revs in 425:1771 1773:1774 1776:9999 ; do
+    # the new path.
+
+    # This was to skip r1772 and r1775, where the first new-conc branch
+    # was created and then deleted, but it causes differences for some reason:
+    #
+    # revlist="425:1771 1773:1774 1776:9999"
+
+    revlist="425:9999"
+    for revs in $revlist ; do
 	cat cams.dump | \
 	    rename trunk/DataStore trunk/DataStream/DataStore | \
 	    svnadmin load -r$revs cams
